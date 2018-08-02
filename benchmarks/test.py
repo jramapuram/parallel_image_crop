@@ -1,6 +1,7 @@
 import os
 import time
 import argparse
+import multiprocessing
 import numpy as np
 from cffi import FFI
 from multiprocessing import Pool
@@ -102,7 +103,7 @@ class CropLambdaPool(object):
 def python_crop_bench(paths, scale, x, y, window_size, max_img_percentage):
     crop_lbdas = [CropLambda(p, window_size, max_img_percentage) for p in paths]
     z = np.hstack([np.expand_dims(scale, 1), np.expand_dims(x, 1), np.expand_dims(y, 1)])
-    return CropLambdaPool(num_workers=8)(crop_lbdas, z)
+    return CropLambdaPool(num_workers=multiprocessing.cpu_count())(crop_lbdas, z)
 
 def create_and_set_ffi():
     ffi = FFI()
@@ -116,7 +117,7 @@ def create_and_set_ffi():
 
     """);
 
-    lib = ffi.dlopen(find("libimage_pool.so", ".."))
+    lib = ffi.dlopen(find("libparallel_image_crop.so", ".."))
     return lib, ffi
 
 

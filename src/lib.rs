@@ -136,7 +136,6 @@ pub extern "C" fn parallel_crop_and_resize(image_paths_ptr: *const *const c_char
                                            scale_ptr: *const f32,
                                            x_ptr: *const f32,
                                            y_ptr: *const f32,
-                                           //result_ptr: *const *const u8,
                                            window_size: u32,
                                            max_img_percent: f32,
                                            length: size_t) -> Array
