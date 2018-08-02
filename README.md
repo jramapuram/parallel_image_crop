@@ -6,6 +6,8 @@ The library requires a mini-batch of `paths`, `x-coordinates`, `y-coordinates`, 
 Using this it returns a crop per image. Parallelism takes place automatically using `rayon`
 
 ## Performance Statistics
+These are using FFI for the rust library.
+There are probably better python implementations, but this leverages `PIL-SIMD`:
 
 ```bash
 > python benchmarks/test.py --batch-size=32 --num-trials=200
