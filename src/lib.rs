@@ -3,12 +3,13 @@ extern crate image;
 extern crate rayon;
  #[macro_use] extern crate itertools;
 
+use std::ptr;
 use std::fs::File;
 use std::path::Path;
 use std::ffi::{CStr, OsStr};
 use std::{slice, str, mem};
 use rayon::prelude::*;
-use libc::{size_t, c_char};
+use libc::{size_t, c_char, c_uchar};
 use image::{GenericImage, ImageBuffer, imageops, FilterType, ColorType, ImageDecoder};
 
 mod lazy_load;
@@ -29,6 +30,16 @@ pub struct Array {
 }
 unsafe impl Send for Array {}
 
+/// impl<T: Send> FromParallelIterator<T> for BlackHole {
+///     fn from_par_iter<I>(par_iter: I) -> Self
+///         where I: IntoParallelIterator<Item = T>
+///     {
+///         let par_iter = par_iter.into_par_iter();
+///         BlackHole {
+///             mass: par_iter.count() * mem::size_of::<T>(),
+///         }
+///     }
+/// }
 
 // from: https://stackoverflow.com/questions/34622127/how-to-convert-a-const-pointer-into-a-vec-to-correctly-drop-it?rq=1
 impl Array {
@@ -137,12 +148,14 @@ pub fn crop_and_resize(path: &str, scale: f32, x_crop: f32, y_crop: f32,
 
 #[no_mangle]
 pub extern "C" fn parallel_crop_and_resize(image_paths_ptr: *const *const c_char,
+                                           return_ptr: *mut u8,
                                            scale_ptr: *const f32,
                                            x_ptr: *const f32,
                                            y_ptr: *const f32,
                                            window_size: u32,
+                                           chans: u32,
                                            max_img_percent: f32,
-                                           length: size_t) -> Array
+                                           length: size_t)
 {
     // accepts list of image-paths (str), a vector (np) of z's
     // and the size of the arrays (i.e. batch dim)
@@ -150,12 +163,11 @@ pub extern "C" fn parallel_crop_and_resize(image_paths_ptr: *const *const c_char
     assert!(!scale_ptr.is_null(), "can't operate over null scale vector");
     assert!(!x_ptr.is_null(), "can't operate over null x vector");
     assert!(!y_ptr.is_null(), "can't operate over null y vector");
-    // assert!(!result_ptr.is_null(), "can't operate over null result vector");
+    assert!(!return_ptr.is_null(), "can't operate over null result vector");
     assert!(!image_paths_ptr.is_null(), "can't operate over null list of image paths");
 
     // gather the paths into a vector
-    let path_values_buf = unsafe { slice::from_raw_parts(image_paths_ptr, length as usize) };
-    let image_paths_vec: Vec<&str> = path_values_buf.iter()
+    let image_paths_vec: Vec<&str> = unsafe { slice::from_raw_parts(image_paths_ptr, length as usize) }.iter()
         .map(|&p| unsafe { CStr::from_ptr(p) })  // iterator of &CStr
         .map(|cs| cs.to_bytes())                 // iterator of &[u8]
         .map(|bs| str::from_utf8(bs).unwrap())   // iterator of &str
@@ -165,36 +177,23 @@ pub extern "C" fn parallel_crop_and_resize(image_paths_ptr: *const *const c_char
     let scale_values = unsafe { slice::from_raw_parts(scale_ptr, length as usize) };
     let x_values = unsafe { slice::from_raw_parts(x_ptr, length as usize) };
     let y_values = unsafe { slice::from_raw_parts(y_ptr, length as usize) };
-    // let result_values = unsafe { slice::from_raw_parts(result_ptr, length*window_size as usize) };
-
-    // println!("image_paths_vec = {:?}", image_paths_vec);
-    // println!("scales = {:?}", scale_values);
-
-    // merge them all into tuples
-    // let mut joint_vec = Vec::new();
-    // for (begin, path, scale, x, y) in izip!((0..length*window_size).step_by(window_size),
-    //                                  image_paths_vec,
-    //                                  scale_values,
-    //                                  x_values, y_values)
-    // {
-    //     joint_vec.push((result_values[begin..begin+window_size], path, *scale, *x, *y));
-    // }
 
     // working!
     let mut resultant_vec = vec![];
-    image_paths_vec.par_iter().zip(scale_values)
+    image_paths_vec.into_par_iter().zip(scale_values)
         .zip(x_values.par_iter()).zip(y_values)
              .map(|(((path, scale), x), y)| {
-                 Array::from_vec(crop_and_resize(*path,
+                 Array::from_vec(crop_and_resize(path,
                                                  *scale, *x, *y,
                                                  max_img_percent,
                                                  window_size,
                                                  window_size).raw_pixels()
                  )
              }).collect_into_vec(&mut resultant_vec);
+
     // image_paths_vec.par_iter().zip(scale_values)
     //     .zip(x_values.par_iter()).zip(y_values)
-    //     .zip(result_values.par_iter())
+    //     .zip(return_vec.par_iter_mut())
     //     .for_each(|((((path, scale), x), y), r)| {
     //         *r = Array::from_vec(crop_and_resize(*path,
     //                                              *scale, *x, *y,
@@ -204,34 +203,14 @@ pub extern "C" fn parallel_crop_and_resize(image_paths_ptr: *const *const c_char
     //         ).data;
     //     });
 
-
-    // non-parallel iterate over the tuples
-    // let resultant_vec = joint_vec.iter()
-    //     .map(|(path, s, x, y)| crop_and_resize(path,
-    //                                            *s, *x, *y,
-    //                                            max_img_percent,
-    //                                            window_size,
-    //                                            window_size).raw_pixels())
-    //     .collect();
-
-    // joint_vec.par_iter()
-    //     .for_each(|(r, path, s, x, y)| r = crop_and_resize(path,
-    //                                                         *s, *x, *y,
-    //                                                         max_img_percent,
-    //                                                         window_size,
-    //                                                         window_size).raw_pixels().as_slice())
-
-    // let mut resultant_vec = vec![];
-    // joint_vec.par_iter()
-    //     .map(|(path, s, x, y)| Array::from_vec(crop_and_resize(path,
-    //                                            *s, *x, *y,
-    //                                            max_img_percent,
-    //                                            window_size,
-    //                                            window_size).raw_pixels()))
-    //     .collect_into_vec(&mut resultant_vec);
-
-    // return an Array type as result
-    Array::from_vec(resultant_vec)
+    // copy the buffer into the return array
+    let win_size = (window_size * window_size * chans) as usize;
+    for (begin, rvec) in izip!((0..length*win_size).step_by(win_size), resultant_vec)
+    {
+        assert!(rvec.len == win_size, "rvec [{:?}] != window_size [{:?}]", rvec.len, win_size);
+        unsafe { ptr::copy(rvec.data as *const u8, return_ptr.offset(begin as isize),
+                           win_size) };
+    }
 }
 
 

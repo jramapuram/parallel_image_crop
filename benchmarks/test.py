@@ -3,8 +3,10 @@ import time
 import argparse
 import multiprocessing
 import numpy as np
+import matplotlib.pyplot as plt
 from cffi import FFI
 from multiprocessing import Pool
+from joblib import Parallel, delayed
 from PIL import Image
 
 parser = argparse.ArgumentParser(description='Rust vs. Python Image Cropping Bench')
@@ -27,19 +29,21 @@ def generate_scale_x_y(batch_size):
     y = np.random.rand(batch_size).astype(np.float32)
     return scale, x, y
 
-def rust_crop_bench(ffi, lib, path_list, scale, x, y, window_size, max_img_percentage):
+def rust_crop_bench(ffi, lib, path_list, chans, scale, x, y, window_size, max_img_percentage):
     path_keepalive = [ffi.new("char[]", p) for p in path_list]
     batch_size = len(path_list)
-    crops = np.zeros(window_size*batch_size)
-    crops = lib.parallel_crop_and_resize(ffi.new("char* []", path_keepalive),
-                                         ffi.cast("float*", ffi.cast("float*", np.ascontiguousarray(scale).ctypes.data)), # scale
-                                         ffi.cast("float*", ffi.cast("float*", np.ascontiguousarray(x).ctypes.data)),     # x
-                                         ffi.cast("float*", ffi.cast("float*", np.ascontiguousarray(y).ctypes.data)),     # y
-                                         # ffi.cast("float*", ffi.cast("float*", np.ascontiguousarray(crops).ctypes.data)), # resultant crops
-                                         window_size,
-                                         max_img_percentage,
-                                         batch_size)
-    # print(crops)
+    crops = np.zeros(chans*window_size*window_size*batch_size, dtype=np.uint8)
+    lib.parallel_crop_and_resize(ffi.new("char* []", path_keepalive),
+                                 ffi.cast("uint8_t*", ffi.cast("uint8_t*", np.ascontiguousarray(crops).ctypes.data)), # resultant crops
+                                 ffi.cast("float*", ffi.cast("float*", np.ascontiguousarray(scale).ctypes.data)), # scale
+                                 ffi.cast("float*", ffi.cast("float*", np.ascontiguousarray(x).ctypes.data)),     # x
+                                 ffi.cast("float*", ffi.cast("float*", np.ascontiguousarray(y).ctypes.data)),     # y
+                                 window_size,
+                                 chans,
+                                 max_img_percentage,
+                                 batch_size)
+    crops = crops.reshape([batch_size, window_size, window_size, chans])
+    # plt.imshow(crops[np.random.randint(batch_size)].squeeze()); plt.show()
     return crops
 
 
@@ -97,13 +101,16 @@ class CropLambdaPool(object):
         return lbda(z_i)
 
     def __call__(self, list_of_lambdas, z_vec):
-        with Pool(self.num_workers) as pool:
-            return pool.starmap(self._apply, zip(list_of_lambdas, z_vec))
+        # with Pool(self.num_workers) as pool:
+        #     return pool.starmap(self._apply, zip(list_of_lambdas, z_vec))
+        return Parallel(n_jobs=len(list_of_lambdas))(
+            delayed(self._apply)(list_of_lambdas[i], z_vec[i]) for i in range(len(list_of_lambdas)))
 
 def python_crop_bench(paths, scale, x, y, window_size, max_img_percentage):
     crop_lbdas = [CropLambda(p, window_size, max_img_percentage) for p in paths]
     z = np.hstack([np.expand_dims(scale, 1), np.expand_dims(x, 1), np.expand_dims(y, 1)])
-    return CropLambdaPool(num_workers=multiprocessing.cpu_count())(crop_lbdas, z)
+    #return CropLambdaPool(num_workers=multiprocessing.cpu_count())(crop_lbdas, z)
+    return CropLambdaPool(num_workers=32)(crop_lbdas, z)
 
 def create_and_set_ffi():
     ffi = FFI()
@@ -113,7 +120,7 @@ def create_and_set_ffi():
         size_t len;
     } array_t;
 
-    array_t parallel_crop_and_resize(char**, float*, float*, float*, uint32_t, float, size_t);
+    void parallel_crop_and_resize(char**, uint8_t*, float*, float*, float*, uint32_t, uint32_t, float, size_t);
 
     """);
 
@@ -124,8 +131,12 @@ def create_and_set_ffi():
 if __name__ == "__main__":
     lena_gray = find("lena_gray.png", "..")
     lena_color = find("lena.png", "..")
-    path_list = [lena_gray for _ in range(args.batch_size // 2)]+ \
-         [lena_color for _ in range(args.batch_size // 2)]
+    # lena_gray = find("lena_gray.jpeg", "..")
+    # lena_color = find("lena.jpeg", "..")
+    # path_list = [lena_gray for _ in range(args.batch_size // 2)]+ \
+    #      [lena_color for _ in range(args.batch_size // 2)]
+    # path_list = [lena_color for _ in range(args.batch_size // 2)]
+    path_list = [lena_gray for _ in range(args.batch_size // 2)]
     for i in range(len(path_list)):  # convert to ascii for ffi
         path_list[i] = path_list[i].encode('ascii')
 
@@ -143,9 +154,10 @@ if __name__ == "__main__":
     # bench rust lib
     rust_time = []
     lib, ffi = create_and_set_ffi()
+    chans = 1
     for i in range(args.num_trials):
         start_time = time.time()
-        rust_crop_bench(ffi, lib, path_list, scale, x, y, 32, 0.25)
+        rust_crop_bench(ffi, lib, path_list, chans, scale, x, y, 32, 0.25)
         rust_time.append(time.time() - start_time)
 
     print("rust crop average over {} trials : {} sec".format(args.num_trials, np.mean(rust_time)))
