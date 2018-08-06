@@ -14,16 +14,16 @@ The following tests compare the Rust implementation against `PIL-SIMD`, `pyvips`
 Gray Scale 4000 x 4000 JPEG Image:
 
 ```bash
-(base) ➜  parallel_image_crop git:(master) ✗ python benchmarks/test.py --batch-size=32 --num-trials=100 --use-vips=0 --use-threading=0
+(base) ➜  parallel_image_crop git:(master) ✗ python benchmarks/test.py --batch-size=32 --num-trials=100 --use-vips=0 --use-threading=0 --use-grayscale=1
 python crop average over 100 trials : 0.48177589893341066 +/- 0.06522766741342648 sec
 rust crop average over 100 trials : 0.5541290354728698 +/- 0.01701503452857914 sec
-(base) ➜  parallel_image_crop git:(master) ✗ python benchmarks/test.py --batch-size=32 --num-trials=100 --use-vips=0 --use-threading=1
+(base) ➜  parallel_image_crop git:(master) ✗ python benchmarks/test.py --batch-size=32 --num-trials=100 --use-vips=0 --use-threading=1 --use-grayscale=1
 python crop average over 100 trials : 0.46666148900985716 +/- 0.04960818629061339 sec
 rust crop average over 100 trials : 0.5545140480995179 +/- 0.018513324366932055 sec
-(base) ➜  parallel_image_crop git:(master) ✗ python benchmarks/test.py --batch-size=32 --num-trials=100 --use-vips=1 --use-threading=0
+(base) ➜  parallel_image_crop git:(master) ✗ python benchmarks/test.py --batch-size=32 --num-trials=100 --use-vips=1 --use-threading=0 --use-grayscale=1
 python crop average over 100 trials : 0.4660675573348999 +/- 0.057874179663163314 sec
 rust crop average over 100 trials : 0.5588112926483154 +/- 0.02093116503601568 sec
-(base) ➜  parallel_image_crop git:(master) ✗ python benchmarks/test.py --batch-size=32 --num-trials=100 --use-vips=1 --use-threading=1
+(base) ➜  parallel_image_crop git:(master) ✗ python benchmarks/test.py --batch-size=32 --num-trials=100 --use-vips=1 --use-threading=1 --use-grayscale=1
 python crop average over 100 trials : 0.4722147536277771 +/- 0.0485672093840053 sec
 rust crop average over 100 trials : 0.5598368859291076 +/- 0.023788753163516176 sec
 ```
@@ -31,18 +31,34 @@ rust crop average over 100 trials : 0.5598368859291076 +/- 0.023788753163516176 
 Gray Scale 4000 x 4000 PNG Image:
 
 ```bash
-(base) ➜  parallel_image_crop git:(master) ✗ python benchmarks/test.py --batch-size=32 --num-trials=100 --use-vips=0 --use-threading=0
+(base) ➜  parallel_image_crop git:(master) ✗ python benchmarks/test.py --batch-size=32 --num-trials=100 --use-vips=0 --use-threading=0 --use-grayscale=1
 python crop average over 100 trials : 0.48749495029449463 +/- 0.08113528509347652 sec
 rust crop average over 100 trials : 0.5558233976364135 +/- 0.016653053525873318 sec
-(base) ➜  parallel_image_crop git:(master) ✗ python benchmarks/test.py --batch-size=32 --num-trials=100 --use-vips=0 --use-threading=1
+(base) ➜  parallel_image_crop git:(master) ✗ python benchmarks/test.py --batch-size=32 --num-trials=100 --use-vips=0 --use-threading=1 --use-grayscale=1
 python crop average over 100 trials : 0.47109495639801025 +/- 0.04871502077173173 sec
 rust crop average over 100 trials : 0.5580063557624817 +/- 0.03254635395283061 sec
-(base) ➜  parallel_image_crop git:(master) ✗ python benchmarks/test.py --batch-size=32 --num-trials=100 --use-vips=1 --use-threading=0
+(base) ➜  parallel_image_crop git:(master) ✗ python benchmarks/test.py --batch-size=32 --num-trials=100 --use-vips=1 --use-threading=0 --use-grayscale=1
 python crop average over 100 trials : 0.45097975969314574 +/- 0.05091062232673361 sec
 rust crop average over 100 trials : 0.5570903038978576 +/- 0.02757379330167939 sec
-(base) ➜  parallel_image_crop git:(master) ✗ python benchmarks/test.py --batch-size=32 --num-trials=100 --use-vips=1 --use-threading=1
+(base) ➜  parallel_image_crop git:(master) ✗ python benchmarks/test.py --batch-size=32 --num-trials=100 --use-vips=1 --use-threading=1 --use-grayscale=1
 python crop average over 100 trials : 0.46305535078048704 +/- 0.05080726901263223 sec
 rust crop average over 100 trials : 0.5532968330383301 +/- 0.024264257976699295 sec
+```
+
+Gray Scale 4000 x 4000 BMP Image:
+```bash
+(base) ➜  parallel_image_crop git:(master) ✗ python benchmarks/test.py --batch-size=32 --num-trials=100 --use-vips=0 --use-threading=0 --use-grayscale=1
+python crop average over 100 trials : 0.41575870513916013 +/- 0.2293008182224854 sec
+rust crop average over 100 trials : 0.41494714736938476 +/- 0.008218232557933018 sec
+(base) ➜  parallel_image_crop git:(master) ✗ python benchmarks/test.py --batch-size=32 --num-trials=100 --use-vips=0 --use-threading=1 --use-grayscale=1
+python crop average over 100 trials : 0.40679455041885376 +/- 0.1453958218374439 sec
+rust crop average over 100 trials : 0.4185313296318054 +/- 0.01249058083031065 sec
+(base) ➜  parallel_image_crop git:(master) ✗ python benchmarks/test.py --batch-size=32 --num-trials=100 --use-vips=1 --use-threading=0 --use-grayscale=1
+python crop average over 100 trials : 0.4151870512962341 +/- 0.14371236661889436 sec
+rust crop average over 100 trials : 0.4274453210830689 +/- 0.019399714659261984 sec
+(base) ➜  parallel_image_crop git:(master) ✗ python benchmarks/test.py --batch-size=32 --num-trials=100 --use-vips=1 --use-threading=1 --use-grayscale=1
+python crop average over 100 trials : 0.4173280334472656 +/- 0.15052042382476047 sec
+rust crop average over 100 trials : 0.4264633345603943 +/- 0.021683232996469272 sec
 ```
 
 Color 512 x 512 PNG Image:
@@ -79,5 +95,6 @@ rust crop average over 100 trials : 0.05264364004135132 +/- 0.004437379466866233
 
 ## Takeaway
 
-If you have small images the Rust library seems faster.
-If you have large images go with `PIL-SIMD` or `vips`
+  - **Small Images**: use Rust library (ours)
+  - **Large Images**: use `PIL-SIMD` or `vips`
+  - **Image Format**: no discernible performance gain b/w `PNG` or `JPEG`. `BMP` is slowest.
