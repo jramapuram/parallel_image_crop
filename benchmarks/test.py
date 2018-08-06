@@ -12,10 +12,18 @@ from PIL import Image
 parser = argparse.ArgumentParser(description='Rust vs. Python Image Cropping Bench')
 parser.add_argument('--batch-size', type=int, default=10,
                     help="batch-size (default: 10)")
+parser.add_argument('--use-vips', type=bool, default=False,
+                    help="use VIPS instead of PIL-SIMD (default: False)")
+parser.add_argument('--use-grayscale', type=bool, default=False,
+                    help="use grayscale images (default: False)")
+parser.add_argument('--use-threading', type=bool, default=False,
+                    help="use threading instead of multiprocessing (default: False)")
 parser.add_argument('--num-trials', type=int, default=10,
                     help="number of trials to average over (default: 10)")
 args = parser.parse_args()
 
+if args.use_vips:
+    import pyvips
 
 def find(name, path):
     for root, dirs, files in os.walk(path):
@@ -64,6 +72,12 @@ class CropLambda(object):
         return (((val) * (newmax - newmin)) / (1.0)) + newmin
 
     def __call__(self, crop):
+        if args.use_vips:
+            return self.__call_pyvips__(crop)
+
+        return self.__call_PIL__(crop)
+
+    def __call_PIL__(self, crop):
         ''' converts [crop_center, x, y] to a 4-tuple
             defining the left, upper, right, and lower
             pixel coordinate and return a lambda '''
@@ -93,9 +107,41 @@ class CropLambda(object):
                 crop_img = img.crop((x, y, x + crop_size[0], y + crop_size[1]))
                 return crop_img.resize((self.window_size, self.window_size), resample=2)
 
+    def __call_pyvips__(self, crop):
+        ''' converts [crop_center, x, y] to a 4-tuple
+            defining the left, upper, right, and lower
+            pixel coordinate and return a lambda '''
+        img = pyvips.Image.new_from_file(self.path, access='sequential')
+        img_size = np.array([img.height, img.width]) # numpy-ize the img size (tuple)
+
+        # scale the (x, y) co-ordinates to the size of the image
+        assert crop[1] >= 0 and crop[1] <= 1, "x needs to be \in [0, 1]"
+        assert crop[2] >= 0 and crop[2] <= 1, "y needs to be \in [0, 1]"
+        x, y = [int(self.scale(crop[1], 0, img_size[0])),
+                int(self.scale(crop[2], 0, img_size[1]))]
+
+        # calculate the scale of the true crop using the provided scale
+        # Note: this is different from the return size, i.e. window_size
+        crop_scale = min(crop[0], self.max_img_percent)
+        crop_size = np.floor(img_size * crop_scale).astype(int) - 1
+
+        # bound the (x, t) co-ordinates to be plausible
+        # i.e < img_size - crop_size
+        max_coords = img_size - crop_size
+        x, y = min(x, max_coords[0]), min(y, max_coords[1])
+
+        # crop the actual image and then upsample it to window_size
+        # resample = 2 is a BILINEAR transform, avoid importing PIL for enum
+        # TODO: maybe also try 1 = ANTIALIAS = LANCZOS
+        crop_img = img.crop(x, y, crop_size[0], crop_size[1])
+        #return crop_img.resize((self.window_size, self.window_size), resample=2)
+        return np.array(crop_img.resize(self.window_size / crop_img.width,
+                                        vscale=self.window_size / crop_img.height).write_to_memory())
+
 class CropLambdaPool(object):
     def __init__(self, num_workers=8):
         self.num_workers = num_workers
+        self.backend = 'threading' if args.use_threading else 'loky'
 
     def _apply(self, lbda, z_i):
         return lbda(z_i)
@@ -103,7 +149,7 @@ class CropLambdaPool(object):
     def __call__(self, list_of_lambdas, z_vec):
         # with Pool(self.num_workers) as pool:
         #     return pool.starmap(self._apply, zip(list_of_lambdas, z_vec))
-        return Parallel(n_jobs=len(list_of_lambdas))(
+        return Parallel(n_jobs=len(list_of_lambdas), backend=self.backend)(
             delayed(self._apply)(list_of_lambdas[i], z_vec[i]) for i in range(len(list_of_lambdas)))
 
 def python_crop_bench(paths, scale, x, y, window_size, max_img_percentage):
@@ -129,14 +175,8 @@ def create_and_set_ffi():
 
 
 if __name__ == "__main__":
-    lena_gray = find("lena_gray.png", "..")
-    lena_color = find("lena.png", "..")
-    # lena_gray = find("lena_gray.jpeg", "..")
-    # lena_color = find("lena.jpeg", "..")
-    # path_list = [lena_gray for _ in range(args.batch_size // 2)]+ \
-    #      [lena_color for _ in range(args.batch_size // 2)]
-    # path_list = [lena_color for _ in range(args.batch_size // 2)]
-    path_list = [lena_gray for _ in range(args.batch_size // 2)]
+    lena = find("lena_gray.png", "..") if args.use_grayscale else find("lena.png", "..")
+    path_list = [lena for _ in range(args.batch_size)]
     for i in range(len(path_list)):  # convert to ascii for ffi
         path_list[i] = path_list[i].encode('ascii')
 
@@ -149,15 +189,17 @@ if __name__ == "__main__":
         python_crop_bench(path_list, scale, x, y, 32, 0.25)
         python_time.append(time.time() - start_time)
 
-    print("python crop average over {} trials : {} sec".format(args.num_trials, np.mean(python_time)))
+    print("python crop average over {} trials : {} +/- {} sec".format(
+        args.num_trials, np.mean(python_time), np.std(python_time)))
 
     # bench rust lib
     rust_time = []
     lib, ffi = create_and_set_ffi()
-    chans = 1
+    chans = 3
     for i in range(args.num_trials):
         start_time = time.time()
         rust_crop_bench(ffi, lib, path_list, chans, scale, x, y, 32, 0.25)
         rust_time.append(time.time() - start_time)
 
-    print("rust crop average over {} trials : {} sec".format(args.num_trials, np.mean(rust_time)))
+    print("rust crop average over {} trials : {} +/- {} sec".format(
+        args.num_trials, np.mean(rust_time), np.std(rust_time)))
