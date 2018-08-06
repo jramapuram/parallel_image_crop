@@ -12,17 +12,18 @@ from PIL import Image
 parser = argparse.ArgumentParser(description='Rust vs. Python Image Cropping Bench')
 parser.add_argument('--batch-size', type=int, default=10,
                     help="batch-size (default: 10)")
-parser.add_argument('--use-vips', type=bool, default=False,
-                    help="use VIPS instead of PIL-SIMD (default: False)")
-parser.add_argument('--use-grayscale', type=bool, default=False,
-                    help="use grayscale images (default: False)")
-parser.add_argument('--use-threading', type=bool, default=False,
-                    help="use threading instead of multiprocessing (default: False)")
 parser.add_argument('--num-trials', type=int, default=10,
                     help="number of trials to average over (default: 10)")
+parser.add_argument('--use-vips', action='store_true',
+                    help="use VIPS instead of PIL-SIMD (default: False)")
+parser.add_argument('--use-grayscale', action='store_true',
+                    help="use grayscale images (default: False)")
+parser.add_argument('--use-threading', action='store_true',
+                    help="use threading instead of multiprocessing (default: False)")
+
 args = parser.parse_args()
 
-if args.use_vips:
+if args.use_vips is True:
     import pyvips
 
 def find(name, path):
@@ -72,7 +73,7 @@ class CropLambda(object):
         return (((val) * (newmax - newmin)) / (1.0)) + newmin
 
     def __call__(self, crop):
-        if args.use_vips:
+        if args.use_vips is True:
             return self.__call_pyvips__(crop)
 
         return self.__call_PIL__(crop)
@@ -141,7 +142,7 @@ class CropLambda(object):
 class CropLambdaPool(object):
     def __init__(self, num_workers=8):
         self.num_workers = num_workers
-        self.backend = 'threading' if args.use_threading else 'loky'
+        self.backend = 'threading' if args.use_threading is True else 'loky'
 
     def _apply(self, lbda, z_i):
         return lbda(z_i)
@@ -170,12 +171,12 @@ def create_and_set_ffi():
 
     """);
 
-    lib = ffi.dlopen(find("libparallel_image_crop.so", ".."))
+    lib = ffi.dlopen('./target/release/libparallel_image_crop.so')
     return lib, ffi
 
 
 if __name__ == "__main__":
-    lena = find("lena_gray.png", "..") if args.use_grayscale else find("lena.png", "..")
+    lena = './assets/lena_gray.png' if args.use_grayscale is True else './assets/lena.png'
     path_list = [lena for _ in range(args.batch_size)]
     for i in range(len(path_list)):  # convert to ascii for ffi
         path_list[i] = path_list[i].encode('ascii')
@@ -195,7 +196,7 @@ if __name__ == "__main__":
     # bench rust lib
     rust_time = []
     lib, ffi = create_and_set_ffi()
-    chans = 3
+    chans = 1 if args.use_grayscale is True else 3
     for i in range(args.num_trials):
         start_time = time.time()
         rust_crop_bench(ffi, lib, path_list, chans, scale, x, y, 32, 0.25)
