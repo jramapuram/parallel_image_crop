@@ -2,6 +2,8 @@
 name = "parallel_image_crop"
 version = "0.1.0"
 authors = ["Jason Ramapuram <jason.ramapuram@gmail.com>"]
+description = "A simple rust library that crops a set of images in parallel and that can be called from python through FFI."
+license = "MIT"
 
 [lib]
 crate-type = ["dylib"]
