@@ -163,8 +163,9 @@ def create_and_set_ffi():
         size_t len;
     } array_t;
 
+    void destroy_vips();
+    void initialize_vips();
     void parallel_crop_and_resize(char**, uint8_t*, float*, float*, float*, uint32_t, uint32_t, float, size_t);
-
     """);
 
     lib = ffi.dlopen('./target/release/libparallel_image_crop.so')
@@ -172,7 +173,7 @@ def create_and_set_ffi():
 
 
 if __name__ == "__main__":
-    lena = './assets/lena_gray.png' if args.use_grayscale is True else './assets/lena.png'
+    lena = './assets/lena_gray.png' if args.use_grayscale is True else './assets/lena.tif'
     path_list = [lena for _ in range(args.batch_size)]
     for i in range(len(path_list)):  # convert to ascii for ffi
         path_list[i] = path_list[i].encode('ascii')
@@ -195,10 +196,12 @@ if __name__ == "__main__":
     rust_time = []
     lib, ffi = create_and_set_ffi()
     chans = 1 if args.use_grayscale is True else 3
+    lib.initialize_vips();
     for i in range(args.num_trials):
         start_time = time.time()
         rust_crop_bench(ffi, lib, path_list, chans, scale, x, y, 32, 0.25)
         rust_time.append(time.time() - start_time)
 
+    lib.destroy_vips();
     print("rust crop average over {} trials : {} +/- {} sec".format(
         args.num_trials, np.mean(rust_time), np.std(rust_time)))

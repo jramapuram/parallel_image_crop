@@ -89,6 +89,20 @@ pub fn crop_and_resize(path: &str, scale: f32, x_crop: f32, y_crop: f32,
 
 
 #[no_mangle]
+pub extern "C" fn initialize_vips()
+{
+    vips_ffi::initialize_vips();
+}
+
+
+#[no_mangle]
+pub extern "C" fn destroy_vips()
+{
+    vips_ffi::destroy_vips();
+}
+
+
+#[no_mangle]
 pub extern "C" fn parallel_crop_and_resize(image_paths_ptr: *const *const c_char,
                                            return_ptr: *mut u8,
                                            scale_ptr: *const f32,
@@ -125,17 +139,16 @@ pub extern "C" fn parallel_crop_and_resize(image_paths_ptr: *const *const c_char
     image_paths_vec.into_par_iter().zip(scale_values)
         .zip(x_values.par_iter()).zip(y_values)
         .map(|(((path, scale), x), y)| {
-            crop_and_resize(path,
-                            *scale, *x, *y,
-                            max_img_percent,
-                            window_size,
-                            window_size).raw_pixels()
-                 // Array::from_vec(crop_and_resize(path,
-                 //                                 *scale, *x, *y,
-                 //                                 max_img_percent,
-                 //                                 window_size,
-                 //                                 window_size).raw_pixels()
-                 // )
+            vips_ffi::vips_crop_and_resize(path,
+                                           *scale, *x , *y,
+                                           max_img_percent,
+                                           window_size,
+                                           window_size)
+            // crop_and_resize(path,
+            //                 *scale, *x, *y,
+            //                 max_img_percent,
+            //                 window_size,
+            //                 window_size).raw_pixels()
              }).collect_into_vec(&mut resultant_vec);
 
     // image_paths_vec.par_iter().zip(scale_values)
