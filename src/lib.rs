@@ -6,72 +6,14 @@ extern crate rayon;
 use std::ptr;
 use std::fs::File;
 use std::path::Path;
-use std::ffi::{CStr, OsStr};
+use std::ffi::{CStr, OsStr, CString};
 use std::{slice, str, mem};
 use rayon::prelude::*;
-use libc::{size_t, c_char, c_uchar};
+use libc::{size_t, c_char, c_uchar, c_void, c_double, c_longlong};
 use image::{GenericImage, ImageBuffer, imageops, FilterType, ColorType, ImageDecoder};
 
 mod lazy_load;
-
-
-#[repr(C)]
-#[derive(Clone)]
-pub struct Crop {
-    pub path: *const c_char,
-    pub crop: *const f32
-}
-
-#[repr(C)]
-#[derive(Clone)]
-pub struct Array {
-    data: *const libc::c_void,
-    len: libc::size_t,
-}
-unsafe impl Send for Array {}
-
-/// impl<T: Send> FromParallelIterator<T> for BlackHole {
-///     fn from_par_iter<I>(par_iter: I) -> Self
-///         where I: IntoParallelIterator<Item = T>
-///     {
-///         let par_iter = par_iter.into_par_iter();
-///         BlackHole {
-///             mass: par_iter.count() * mem::size_of::<T>(),
-///         }
-///     }
-/// }
-
-// from: https://stackoverflow.com/questions/34622127/how-to-convert-a-const-pointer-into-a-vec-to-correctly-drop-it?rq=1
-impl Array {
-    // Note that both of these methods should probably be implementations
-    // of the `From` trait to allow them to participate in more places.
-    fn from_vec<T>(mut v: Vec<T>) -> Array {
-        v.shrink_to_fit(); // ensure capacity == size
-
-        let a = Array {
-            data: v.as_ptr() as *const libc::c_void,
-            len: v.len(),
-        };
-
-        mem::forget(v);
-
-        a
-    }
-
-    // TODO: something like this
-    // fn to_string(self) -> String {
-    //     self.datapath_values_buf.iter()
-    //         .map(|&p| unsafe { CStr::from_ptr(p) })  // iterator of &CStr
-    //         .map(|cs| cs.to_bytes())                 // iterator of &[u8]
-    //         .map(|bs| str::from_utf8(bs).unwrap())   // iterator of &str
-    //         .collect();
-    // }
-
-    fn into_vec(self) -> Vec<u8> {
-        unsafe { Vec::from_raw_parts(self.data as *mut u8, self.len, self.len) }
-    }
-}
-
+mod vips_ffi;
 
 fn scale_range(val: f32, newmin: f32, newmax: f32) -> f32 {
     // simple helper to scale a value range
@@ -182,13 +124,18 @@ pub extern "C" fn parallel_crop_and_resize(image_paths_ptr: *const *const c_char
     let mut resultant_vec = vec![];
     image_paths_vec.into_par_iter().zip(scale_values)
         .zip(x_values.par_iter()).zip(y_values)
-             .map(|(((path, scale), x), y)| {
-                 Array::from_vec(crop_and_resize(path,
-                                                 *scale, *x, *y,
-                                                 max_img_percent,
-                                                 window_size,
-                                                 window_size).raw_pixels()
-                 )
+        .map(|(((path, scale), x), y)| {
+            crop_and_resize(path,
+                            *scale, *x, *y,
+                            max_img_percent,
+                            window_size,
+                            window_size).raw_pixels()
+                 // Array::from_vec(crop_and_resize(path,
+                 //                                 *scale, *x, *y,
+                 //                                 max_img_percent,
+                 //                                 window_size,
+                 //                                 window_size).raw_pixels()
+                 // )
              }).collect_into_vec(&mut resultant_vec);
 
     // image_paths_vec.par_iter().zip(scale_values)
@@ -203,12 +150,15 @@ pub extern "C" fn parallel_crop_and_resize(image_paths_ptr: *const *const c_char
     //         ).data;
     //     });
 
+    //let = unsafe { slice::from_raw_parts(x_ptr, length as usize) };
+
     // copy the buffer into the return array
     let win_size = (window_size * window_size * chans) as usize;
     for (begin, rvec) in izip!((0..length*win_size).step_by(win_size), resultant_vec)
     {
-        assert!(rvec.len == win_size, "rvec [{:?}] != window_size [{:?}]", rvec.len, win_size);
-        unsafe { ptr::copy(rvec.data as *const u8, return_ptr.offset(begin as isize),
+        assert!(rvec.len() == win_size, "rvec [{:?}] != window_size [{:?}]",
+                rvec.len(), win_size);
+        unsafe { ptr::copy(rvec.as_ptr() as *const u8, return_ptr.offset(begin as isize),
                            win_size) };
     }
 }

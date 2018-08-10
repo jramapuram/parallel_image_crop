@@ -42,7 +42,7 @@ def rust_crop_bench(ffi, lib, path_list, chans, scale, x, y, window_size, max_im
     path_keepalive = [ffi.new("char[]", p) for p in path_list]
     batch_size = len(path_list)
     crops = np.zeros(chans*window_size*window_size*batch_size, dtype=np.uint8)
-    lib.parallel_crop_and_resize(ffi.new("char* []", path_keepalive),
+    lib.parallel_crop_and_resize(ffi.new("char* []", path_keepalive) ,
                                  ffi.cast("uint8_t*", ffi.cast("uint8_t*", np.ascontiguousarray(crops).ctypes.data)), # resultant crops
                                  ffi.cast("float*", ffi.cast("float*", np.ascontiguousarray(scale).ctypes.data)), # scale
                                  ffi.cast("float*", ffi.cast("float*", np.ascontiguousarray(x).ctypes.data)),     # x
@@ -132,12 +132,10 @@ class CropLambda(object):
         x, y = min(x, max_coords[0]), min(y, max_coords[1])
 
         # crop the actual image and then upsample it to window_size
-        # resample = 2 is a BILINEAR transform, avoid importing PIL for enum
-        # TODO: maybe also try 1 = ANTIALIAS = LANCZOS
         crop_img = img.crop(x, y, crop_size[0], crop_size[1])
-        #return crop_img.resize((self.window_size, self.window_size), resample=2)
-        return np.array(crop_img.resize(self.window_size / crop_img.width,
-                                        vscale=self.window_size / crop_img.height).write_to_memory())
+        crop_img = np.array(crop_img.resize(self.window_size / crop_img.width,
+                                            vscale=self.window_size / crop_img.height).write_to_memory())
+        return crop_img.reshape(self.window_size, self.window_size, -1)
 
 class CropLambdaPool(object):
     def __init__(self, num_workers=8):
@@ -148,8 +146,6 @@ class CropLambdaPool(object):
         return lbda(z_i)
 
     def __call__(self, list_of_lambdas, z_vec):
-        # with Pool(self.num_workers) as pool:
-        #     return pool.starmap(self._apply, zip(list_of_lambdas, z_vec))
         return Parallel(n_jobs=len(list_of_lambdas), backend=self.backend)(
             delayed(self._apply)(list_of_lambdas[i], z_vec[i]) for i in range(len(list_of_lambdas)))
 
@@ -157,7 +153,7 @@ def python_crop_bench(paths, scale, x, y, window_size, max_img_percentage):
     crop_lbdas = [CropLambda(p, window_size, max_img_percentage) for p in paths]
     z = np.hstack([np.expand_dims(scale, 1), np.expand_dims(x, 1), np.expand_dims(y, 1)])
     #return CropLambdaPool(num_workers=multiprocessing.cpu_count())(crop_lbdas, z)
-    return CropLambdaPool(num_workers=32)(crop_lbdas, z)
+    return CropLambdaPool(num_workers=len(paths))(crop_lbdas, z)
 
 def create_and_set_ffi():
     ffi = FFI()
@@ -187,7 +183,9 @@ if __name__ == "__main__":
     python_time = []
     for i in range(args.num_trials):
         start_time = time.time()
-        python_crop_bench(path_list, scale, x, y, 32, 0.25)
+        crops = python_crop_bench(path_list, scale, x, y, 32, 0.25)
+        # print(crops[0].shape)
+        # plt.imshow(crops[np.random.randint(len(crops))].squeeze()); plt.show()
         python_time.append(time.time() - start_time)
 
     print("python crop average over {} trials : {} +/- {} sec".format(
