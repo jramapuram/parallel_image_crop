@@ -3,6 +3,7 @@ extern crate image;
 use std::io::BufReader;
 use std::path::Path;
 use std::fs::File;
+use rayon::prelude::*;
 
 use image::jpeg;
 use image::png;
@@ -15,7 +16,7 @@ use image::ico;
 use image::pnm;
 #[allow(unused)]
 use image::{ImageDecoder, ImageFormat, ImageResult,
-            DynamicImage};
+            DynamicImage, FilterType};
 
 
 #[allow(dead_code)]
@@ -117,4 +118,36 @@ pub fn lazy_crop_to_vec(path_str: &str, x: u32, y: u32, width: u32, length: u32)
         image::ImageFormat::PNM => try!(pnm::PNMDecoder::new(BufReader::new(fin))).load_rect(x, y, length, width),
         _ => Err(image::ImageError::UnsupportedError(format!("A decoder for {:?} is not available.", format))),
     }
+}
+
+#[allow(dead_code)]
+pub fn lazy_crop_and_resize(path: &str, scale: f32, x_crop: f32, y_crop: f32,
+                            max_img_percent: f32, resize_width: u32, resize_height: u32) -> image::DynamicImage
+{
+    assert!(x_crop >= 0f32 && x_crop <= 1f32, "x of crop not bounded in [0, 1]");
+    assert!(y_crop >= 0f32 && y_crop <= 1f32, "y of crop not bounded in [0, 1]");
+
+    // read the image and grab the size TODO: read using decoder
+    let img_size = dimensions(path).unwrap();
+
+    // scale the x and y co-ordinates to the img_size
+    let mut x = super::scale_range(x_crop, 0f32, img_size.0 as f32) as u32;
+    let mut y = super::scale_range(y_crop, 0f32, img_size.1 as f32) as u32;
+
+    // calculate the scale of the true crop using the provided scale
+    // NOTE: this is different from the return size, i.e. window_size
+    let crop_scale = scale.min(max_img_percent);
+    let crop_size = ((img_size.0 as f32 * crop_scale).floor().max(2.0) as u32,
+                     (img_size.1 as f32 * crop_scale).floor().max(2.0) as u32);
+    let max_coords = (img_size.0 - crop_size.0,
+                      img_size.1 - crop_size.1);
+
+    // threshold the max x and y
+    x = x.min(max_coords.0);
+    y = y.min(max_coords.1);
+
+    // crop the image and resize it
+    lazy_crop_to_image(path, x, y, crop_size.0, crop_size.1).unwrap().resize_exact(
+        resize_width, resize_height, FilterType::Nearest
+    )
 }

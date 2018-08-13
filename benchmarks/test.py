@@ -14,6 +14,8 @@ parser.add_argument('--batch-size', type=int, default=10,
                     help="batch-size (default: 10)")
 parser.add_argument('--num-trials', type=int, default=10,
                     help="number of trials to average over (default: 10)")
+parser.add_argument('--num-threads', type=int, default=0,
+                    help="number of threads to spawn, 0 for auto (default: 0)")
 parser.add_argument('--use-vips', action='store_true',
                     help="use VIPS instead of PIL-SIMD (default: False)")
 parser.add_argument('--use-grayscale', action='store_true',
@@ -38,11 +40,11 @@ def generate_scale_x_y(batch_size):
     y = np.random.rand(batch_size).astype(np.float32)
     return scale, x, y
 
-def rust_crop_bench(ffi, lib, path_list, chans, scale, x, y, window_size, max_img_percentage):
+def rust_crop_bench(ptr, ffi, lib, path_list, chans, scale, x, y, window_size, max_img_percentage):
     path_keepalive = [ffi.new("char[]", p) for p in path_list]
     batch_size = len(path_list)
     crops = np.zeros(chans*window_size*window_size*batch_size, dtype=np.uint8)
-    lib.parallel_crop_and_resize(ffi.new("char* []", path_keepalive) ,
+    lib.parallel_crop_and_resize(ptr, ffi.new("char* []", path_keepalive) ,
                                  ffi.cast("uint8_t*", ffi.cast("uint8_t*", np.ascontiguousarray(crops).ctypes.data)), # resultant crops
                                  ffi.cast("float*", ffi.cast("float*", np.ascontiguousarray(scale).ctypes.data)), # scale
                                  ffi.cast("float*", ffi.cast("float*", np.ascontiguousarray(x).ctypes.data)),     # x
@@ -138,34 +140,32 @@ class CropLambda(object):
         return crop_img.reshape(self.window_size, self.window_size, -1)
 
 class CropLambdaPool(object):
-    def __init__(self, num_workers=8):
+    def __init__(self, num_workers):
         self.num_workers = num_workers
+        if args.num_threads == 0: # parallel(-1) uses all cpu cores
+            self.num_workers = -1
+
         self.backend = 'threading' if args.use_threading is True else 'loky'
 
     def _apply(self, lbda, z_i):
         return lbda(z_i)
 
     def __call__(self, list_of_lambdas, z_vec):
-        return Parallel(n_jobs=len(list_of_lambdas), backend=self.backend)(
+        return Parallel(n_jobs=self.num_workers, backend=self.backend)(
             delayed(self._apply)(list_of_lambdas[i], z_vec[i]) for i in range(len(list_of_lambdas)))
 
 def python_crop_bench(paths, scale, x, y, window_size, max_img_percentage):
     crop_lbdas = [CropLambda(p, window_size, max_img_percentage) for p in paths]
     z = np.hstack([np.expand_dims(scale, 1), np.expand_dims(x, 1), np.expand_dims(y, 1)])
     #return CropLambdaPool(num_workers=multiprocessing.cpu_count())(crop_lbdas, z)
-    return CropLambdaPool(num_workers=len(paths))(crop_lbdas, z)
+    return CropLambdaPool(num_workers=args.num_threads)(crop_lbdas, z)
 
 def create_and_set_ffi():
     ffi = FFI()
     ffi.cdef("""
-    typedef struct  {
-        void* data;
-        size_t len;
-    } array_t;
-
-    void destroy_vips();
-    void initialize_vips();
-    void parallel_crop_and_resize(char**, uint8_t*, float*, float*, float*, uint32_t, uint32_t, float, size_t);
+    void destroy(void*);
+    void* initialize(uint64_t, bool);
+    void parallel_crop_and_resize(void*, char**, uint8_t*, float*, float*, float*, uint32_t, uint32_t, float, size_t);
     """);
 
     lib = ffi.dlopen('./target/release/libparallel_image_crop.so')
@@ -173,7 +173,7 @@ def create_and_set_ffi():
 
 
 if __name__ == "__main__":
-    lena = './assets/lena_gray.png' if args.use_grayscale is True else './assets/lena.tif'
+    lena = './assets/lena_gray.png' if args.use_grayscale is True else './assets/lena.png'
     path_list = [lena for _ in range(args.batch_size)]
     for i in range(len(path_list)):  # convert to ascii for ffi
         path_list[i] = path_list[i].encode('ascii')
@@ -196,12 +196,12 @@ if __name__ == "__main__":
     rust_time = []
     lib, ffi = create_and_set_ffi()
     chans = 1 if args.use_grayscale is True else 3
-    lib.initialize_vips();
+    ptr = lib.initialize(args.num_threads, args.use_vips)
     for i in range(args.num_trials):
         start_time = time.time()
-        rust_crop_bench(ffi, lib, path_list, chans, scale, x, y, 32, 0.25)
+        rust_crop_bench(ptr, ffi, lib, path_list, chans, scale, x, y, 32, 0.25)
         rust_time.append(time.time() - start_time)
 
-    lib.destroy_vips();
+    lib.destroy(ptr)
     print("rust crop average over {} trials : {} +/- {} sec".format(
         args.num_trials, np.mean(rust_time), np.std(rust_time)))
