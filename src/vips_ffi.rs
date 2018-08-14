@@ -23,7 +23,9 @@ pub struct VipsImage<'a> {
 impl<'a> Drop for VipsImage<'a> {
     fn drop(&mut self) {
         unsafe {
-            vips_sys::g_object_unref(self.c as *mut c_void);
+            if self.c as *const c_void != ptr::null(){
+                vips_sys::g_object_unref(self.c as *mut c_void);
+            }
         }
     }
 }
