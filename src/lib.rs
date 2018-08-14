@@ -1,9 +1,10 @@
 extern crate libc;
 extern crate image;
 extern crate rayon;
+extern crate vips_sys;
 //extern crate time;
- #[macro_use] extern crate itertools;
-
+#[macro_use] extern crate itertools;
+#[macro_use] extern crate lazy_static;
 
 use std::ptr;
 use std::fs::File;
@@ -16,21 +17,25 @@ use libc::{size_t, c_char, c_uchar, c_void, c_double, c_longlong};
 
 mod lazy_load;
 mod vips_ffi;
+mod vips;
 mod piston;
+
+use vips_ffi::VipsInstance;
 
 
 struct CropManager{
     threadpool: rayon::ThreadPool,
     num_threads: usize,
-    use_vips: bool
+    use_vips: bool,
+    vips_instance: Option<VipsInstance>
 }
 
-// impl Drop for CropManager{
-//     fn drop(&mut self) {
-//         std::mem:drop(self.threadpool);
-//         println!("calling crop drop");
-//     }
-// }
+impl Drop for CropManager {
+    fn drop(&mut self) {
+        //std::mem:drop(self.threadpool);
+        println!("calling crop drop");
+    }
+}
 
 
 pub fn scale_range(val: f32, newmin: f32, newmax: f32) -> f32 {
@@ -42,15 +47,15 @@ pub fn scale_range(val: f32, newmin: f32, newmax: f32) -> f32 {
 #[no_mangle]
 pub extern "C" fn initialize(num_threads: u64, use_vips: bool) -> *mut c_void
 {
-    if use_vips {
-        vips_ffi::initialize_vips();
-    }
-
-    // build the manager that handles the threadpool
-    let mut cm = Box::new(Box::new(CropManager {
+    // build the manager that handles the threadpool and vips [optional]
+    let cm = Box::new(Box::new(CropManager {
         threadpool: rayon::ThreadPoolBuilder::new().num_threads(num_threads as usize).build().unwrap(),
         num_threads: num_threads as usize,
-        use_vips: use_vips
+        use_vips: use_vips,
+        vips_instance: match use_vips {
+            true  => Some(VipsInstance::new("test", true).unwrap()),
+            false => None
+        }
     }));
 
     // return just a ptr, but forget to memory release it
@@ -61,15 +66,16 @@ pub extern "C" fn initialize(num_threads: u64, use_vips: bool) -> *mut c_void
 #[no_mangle]
 pub extern "C" fn destroy(crop_manager_ptr: *mut c_void)
 {
+    println!("into destroy");
+
     // drop the threadpool
     let cm: Box<Box<CropManager>> = unsafe { Box::from_raw(crop_manager_ptr as *mut Box<CropManager>) };
-    let use_vips = cm.use_vips;
-    std::mem::drop(cm);
-
-    // destroy vips after thread-pool
-    if use_vips {
-        vips_ffi::destroy_vips();
-    }
+    //let use_vips = cm.use_vips;
+    //std::mem::drop(cm);
+    // // destroy vips after thread-pool
+    // if use_vips {
+    //     vips_ffi::destroy_vips();
+    // }
 }
 
 pub struct Job {
@@ -115,13 +121,18 @@ pub extern "C" fn parallel_crop_and_resize(crop_manager_ptr: *const c_void,
         length: length
     };
 
+    match cm.use_vips {
+        true   => vips::execute_job(&job),
+        false => piston::execute_job(&job)
+    };
+
     // post to correct impl
-    cm.threadpool.install(|| {
-        match cm.use_vips {
-            true   => vips_ffi::execute_job(&job),
-            false => piston::execute_job(&job)
-        }
-    });
+    // cm.threadpool.install(|| {
+    //     match cm.use_vips {
+    //         true   => vips_ffi::execute_job(&job),
+    //         false => piston::execute_job(&job)
+    //     }
+    // });
 
     // prevent the release of the crop-manager
     mem::forget(cm);
